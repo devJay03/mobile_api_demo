@@ -3,31 +3,22 @@ import '../../data/notifiers.dart';
 
 class NavbarWidget extends StatelessWidget {
   const NavbarWidget({super.key});
-
   @override
-  Widget build(BuildContext context) {
-    return ValueListenableBuilder<int>(
-      valueListenable: selectedPageNotifier,
-      builder: (context, selectedIndex, child) {
-        return NavigationBar(
-          selectedIndex: selectedIndex,
-          onDestinationSelected: (int index) {
-            selectedPageNotifier.value = index;
-          },
-          destinations: const [
-            NavigationDestination(
-              icon: Icon(Icons.inventory_2_outlined),
-              selectedIcon: Icon(Icons.inventory_2),
-              label: 'Products',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.category_outlined),
-              selectedIcon: Icon(Icons.category),
-              label: 'Categories',
-            ),
-          ],
-        );
-      },
-    );
-  }
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: selectedPageNotifier,
+    builder: (context, index, child) => NavigationBar(
+      selectedIndex: index,
+      onDestinationSelected: (value) => selectedPageNotifier.value = value,
+      destinations: const [
+        NavigationDestination(
+          icon: Icon(Icons.people_outline),
+          label: 'Students',
+        ),
+        NavigationDestination(
+          icon: Icon(Icons.school_outlined),
+          label: 'Courses',
+        ),
+      ],
+    ),
+  );
 }

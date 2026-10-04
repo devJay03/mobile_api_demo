@@ -1,445 +1,355 @@
 import 'dart:convert';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:mobile_api_demo/config/api_config.dart';
 import 'package:mobile_api_demo/data/notifiers.dart';
-import 'package:mobile_api_demo/main.dart';
-import 'package:mobile_api_demo/models/category_model.dart';
-import 'package:mobile_api_demo/models/product_model.dart';
-import 'package:mobile_api_demo/models/user_model.dart';
+import 'package:mobile_api_demo/models/course_model.dart';
+import 'package:mobile_api_demo/models/student_model.dart';
 import 'package:mobile_api_demo/services/api_service.dart';
-import 'package:mobile_api_demo/services/auth_service.dart';
-import 'package:mobile_api_demo/services/storage_service.dart';
-import 'package:mobile_api_demo/views/pages/auth/login_page.dart';
-import 'package:mobile_api_demo/views/pages/auth/register_page.dart';
-import 'package:mobile_api_demo/views/pages/categories/category_page.dart';
-import 'package:mobile_api_demo/views/pages/products/product_add_page.dart';
-import 'package:mobile_api_demo/views/pages/products/product_edit_page.dart';
-import 'package:mobile_api_demo/views/pages/products/product_list_page.dart';
+import 'package:mobile_api_demo/services/course_service.dart';
+import 'package:mobile_api_demo/services/student_service.dart';
 import 'package:mobile_api_demo/views/widgets/widget_tree.dart';
 
+http.Response json(Object body) => http.Response(jsonEncode(body), 200);
 void main() {
-  setUpAll(() {
-    FlutterSecureStorage.setMockInitialValues({});
-    dotenv.loadFromString(envString: 'API_BASE_URL=http://10.0.2.2/web-api/api');
+  setUp(() {
+    selectedPageNotifier.value = 0;
+    dotenv.loadFromString(
+      envString: 'API_BASE_URL=http://10.0.2.2/sample/api/',
+    );
   });
-
-  group('Models & Config Tests', () {
-    test('ApiConfig default endpoints', () {
-      expect(ApiConfig.baseUrl, isNotEmpty);
-      expect(ApiConfig.login, contains('/login'));
-      expect(ApiConfig.register, contains('/register'));
-      expect(ApiConfig.logout, contains('/logout'));
-      expect(ApiConfig.categories, contains('/categories'));
-      expect(ApiConfig.products, contains('/products'));
-    });
-
-    test('UserModel serialization', () {
-      final json = {'id': 1, 'name': 'John Doe', 'email': 'john@example.com'};
-      final user = UserModel.fromJson(json);
-      expect(user.id, 1);
-      expect(user.name, 'John Doe');
-      expect(user.email, 'john@example.com');
-      expect(user.toJson(), json);
-    });
-
-    test('CategoryModel serialization', () {
-      final json = {'id': 5, 'name': 'Electronics', 'description': 'Gadgets'};
-      final category = CategoryModel.fromJson(json);
-      expect(category.id, 5);
-      expect(category.name, 'Electronics');
-      expect(category.description, 'Gadgets');
-      expect(category.toJson(), json);
-    });
-
-    test('ProductModel numeric safety parsing', () {
-      final json = {
-        'id': '10',
-        'name': 'Laptop',
-        'category_id': '2',
-        'category_name': 'Tech',
-        'price': '999.99',
-        'quantity': '15',
-      };
-      final product = ProductModel.fromJson(json);
-      expect(product.id, 10);
-      expect(product.name, 'Laptop');
-      expect(product.categoryId, 2);
-      expect(product.categoryName, 'Tech');
-      expect(product.price, 999.99);
-      expect(product.quantity, 15);
-    });
+  test('config normalizes trailing slash and accepts other hosts', () {
+    expect(ApiConfig.baseUrl, 'http://10.0.2.2/sample/api');
+    for (final url in [
+      'http://localhost/sample/api',
+      'http://192.168.1.5/sample/api',
+      'https://example.test/sample/api',
+    ]) {
+      dotenv.loadFromString(envString: 'API_BASE_URL=$url');
+      expect(ApiConfig.baseUrl, url);
+    }
   });
-
-  group('UI & Navigation Verification', () {
-    testWidgets('App displays LoginPage when unauthenticated',
-        (WidgetTester tester) async {
-      isUserLoggedInNotifier.value = false;
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      expect(find.byType(LoginPage), findsOneWidget);
-      expect(find.byType(WidgetTree), findsNothing);
-      expect(find.text('Welcome Back'), findsOneWidget);
+  test('models accept PHP string IDs but reject missing required fields', () {
+    expect(CourseModel.fromJson({'id': '3', 'title': 'BSIT'}).id, 3);
+    final student = StudentModel.fromJson({
+      'id': '4',
+      'course_id': '4',
+      'title': 'BSIT',
+      'lastname': 'Doe',
+      'firstname': 'Jane',
     });
-
-    testWidgets('App displays WidgetTree when authenticated',
-        (WidgetTester tester) async {
-      isUserLoggedInNotifier.value = true;
-      selectedPageNotifier.value = 0;
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      expect(find.byType(WidgetTree), findsOneWidget);
-      expect(find.byType(LoginPage), findsNothing);
-      expect(find.byType(ProductListPage), findsOneWidget);
-    });
-
-    testWidgets('Tab switching via NavbarWidget switches pages',
-        (WidgetTester tester) async {
-      isUserLoggedInNotifier.value = true;
-      selectedPageNotifier.value = 0;
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      expect(find.byType(ProductListPage), findsOneWidget);
-      expect(find.byType(CategoryPage), findsNothing);
-
-      // Tap on Categories tab (index 1)
-      await tester.tap(find.text('Categories'));
-      await tester.pump();
-
-      expect(selectedPageNotifier.value, 1);
-      expect(find.byType(CategoryPage), findsOneWidget);
-      expect(find.byType(ProductListPage), findsNothing);
-    });
-
-    testWidgets('Logout button resets auth state and routes to LoginPage',
-        (WidgetTester tester) async {
-      isUserLoggedInNotifier.value = true;
-      await tester.pumpWidget(const MyApp());
-      await tester.pump();
-
-      expect(find.byType(WidgetTree), findsOneWidget);
-
-      final logoutButton = find.byIcon(Icons.logout);
-      expect(logoutButton, findsOneWidget);
-      await tester.tap(logoutButton);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(isUserLoggedInNotifier.value, false);
-      expect(find.byType(LoginPage), findsOneWidget);
-      expect(find.byType(WidgetTree), findsNothing);
-    });
-
-    testWidgets('ProductEditPage pre-fills existing product data',
-        (WidgetTester tester) async {
-      final product = ProductModel(
-        id: 42,
-        name: 'Keyboard',
-        categoryId: 3,
-        categoryName: 'Accessories',
-        price: 49.99,
-        quantity: 20,
-      );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: ProductEditPage(product: product),
-        ),
-      );
-      await tester.pump();
-
-      expect(find.text('Keyboard'), findsOneWidget);
-      expect(find.text('49.99'), findsOneWidget);
-      expect(find.text('20'), findsOneWidget);
-      expect(find.text('Update Product'), findsOneWidget);
-    });
-
-    testWidgets('ProductAddPage form validation', (WidgetTester tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: ProductAddPage(),
-        ),
-      );
-      await tester.pump();
-
-      final saveButton = find.text('Save Product');
-      expect(saveButton, findsOneWidget);
-      await tester.tap(saveButton);
-      await tester.pump();
-
-      expect(find.text('Please enter product name'), findsOneWidget);
-    });
+    expect(student.id, 4);
+    expect(student.courseId, 4);
+    expect(
+      () => CourseModel.fromJson({'title': 'BSIT'}),
+      throwsFormatException,
+    );
+    expect(
+      () => CourseModel.fromJson({'id': 1.5, 'title': 'BSIT'}),
+      throwsFormatException,
+    );
   });
-
-  group('Registration Flow & Form UX Refinements', () {
-    testWidgets('LoginPage input types and password visibility toggle',
-        (WidgetTester tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: LoginPage(),
-        ),
+  test(
+    'student list preserves distinct primary keys for the same course',
+    () async {
+      final requests = <http.Request>[];
+      final api = ApiService(
+        client: MockClient((request) async {
+          requests.add(request);
+          return json({
+            'data': [
+              {
+                'id': 4,
+                'course_id': 6,
+                'title': 'BSIT',
+                'lastname': 'A',
+                'firstname': 'One',
+              },
+              {
+                'id': 7,
+                'course_id': 6,
+                'title': 'BSIT',
+                'lastname': 'B',
+                'firstname': 'Two',
+              },
+            ],
+          });
+        }),
       );
-      await tester.pump();
-
-      // Verify email input type
-      final emailField = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Email'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(emailField.keyboardType, TextInputType.emailAddress);
-
-      // Verify password input type and initial obscure state
-      final passwordFieldInitial = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Password'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(passwordFieldInitial.keyboardType, TextInputType.visiblePassword);
-      expect(passwordFieldInitial.obscureText, isTrue);
-
-      // Toggle password visibility
-      final toggleButton = find.descendant(
-        of: find.widgetWithText(TextFormField, 'Password'),
-        matching: find.byType(IconButton),
-      );
-      expect(toggleButton, findsOneWidget);
-      await tester.tap(toggleButton);
-      await tester.pump();
-
-      final passwordFieldToggled = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Password'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(passwordFieldToggled.obscureText, isFalse);
-
-      // Tapping background unfocuses keyboard
-      await tester.tap(find.byType(GestureDetector).first);
-      await tester.pump();
-    });
-
-    testWidgets('LoginPage navigate to RegisterPage and back without stacking',
-        (WidgetTester tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: LoginPage(),
-        ),
-      );
-      await tester.pump();
-
-      // Tap Register link
-      final registerLink = find.text('Register');
-      expect(registerLink, findsOneWidget);
-      await tester.tap(registerLink);
-      await tester.pumpAndSettle();
-
-      expect(find.byType(RegisterPage), findsOneWidget);
-
-      // Tap "Already have an account? Login" link in RegisterPage
-      final loginLink = find.text('Login');
-      expect(loginLink, findsOneWidget);
-      await tester.ensureVisible(loginLink);
-      await tester.tap(loginLink);
-      await tester.pumpAndSettle();
-
-      // Should be back to LoginPage without duplicate pages
-      expect(find.byType(LoginPage), findsOneWidget);
-      expect(find.byType(RegisterPage), findsNothing);
-    });
-
-    testWidgets('RegisterPage input types, password toggles, and form validation',
-        (WidgetTester tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: RegisterPage(),
-        ),
-      );
-      await tester.pump();
-
-      // Email field input type
-      final emailField = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Email'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(emailField.keyboardType, TextInputType.emailAddress);
-
-      // Password field input type & obscure state
-      final passwordField = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Password'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(passwordField.keyboardType, TextInputType.visiblePassword);
-      expect(passwordField.obscureText, isTrue);
-
-      // Confirm Password field input type & obscure state
-      final confirmPasswordField = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Confirm Password'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(confirmPasswordField.keyboardType, TextInputType.visiblePassword);
-      expect(confirmPasswordField.obscureText, isTrue);
-
-      // Toggle password visibility
-      final passwordToggle = find.descendant(
-        of: find.widgetWithText(TextFormField, 'Password'),
-        matching: find.byType(IconButton),
-      );
-      await tester.tap(passwordToggle);
-      await tester.pump();
-
-      final updatedPassword = tester.widget<TextField>(
-        find.descendant(
-          of: find.widgetWithText(TextFormField, 'Password'),
-          matching: find.byType(TextField),
-        ),
-      );
-      expect(updatedPassword.obscureText, isFalse);
-
-      // Tap Register button to trigger validation
-      final registerButton = find.text('Register');
-      await tester.tap(registerButton);
-      await tester.pump();
-
-      expect(find.text('Please enter your name'), findsOneWidget);
-      expect(find.text('Please enter your email'), findsOneWidget);
-      expect(find.text('Please enter your password'), findsOneWidget);
-    });
-
-    testWidgets(
-        'Successful registration clears navigation history and routes into WidgetTree',
-        (WidgetTester tester) async {
-      final mockClient = MockClient((request) async {
-        if (request.url.path.contains('/register')) {
-          return http.Response(
-            jsonEncode({
-              'token': 'test_reg_token_123',
-              'user': {'id': 1, 'name': 'New User', 'email': 'new@test.com'},
-            }),
-            201,
-          );
+      addTearDown(api.close);
+      final students = await StudentService(api).getStudents();
+      expect(students.length, 2);
+      expect(students.map((student) => student.id), [4, 7]);
+      expect(requests.map((request) => request.url.path), [
+        '/sample/api/Students/all',
+      ]);
+    },
+  );
+  test('course CRUD uses PHP routes, form fields, and GET deletion', () async {
+    final requests = <http.Request>[];
+    final api = ApiService(
+      client: MockClient((request) async {
+        requests.add(request);
+        expect(request.headers.containsKey('authorization'), false);
+        if (request.url.path.endsWith('/Courses/all')) {
+          return json({
+            'data': [
+              {'id': '7', 'title': 'Course'},
+            ],
+          });
         }
-        return http.Response('Not found', 404);
-      });
-
-      final storageService = StorageService();
-      final apiService = ApiService(
-        client: mockClient,
-        storageService: storageService,
+        if (request.url.path.endsWith('/Students/all')) {
+          return json({'data': []});
+        }
+        if (request.method == 'GET' && request.url.path.endsWith('/edit/7')) {
+          return json({'id': 7, 'title': 'Course'});
+        }
+        return json({'status': 'success', 'message': 'Saved'});
+      }),
+    );
+    addTearDown(api.close);
+    final service = CourseService(api);
+    expect((await service.getCourses()).single.id, 7);
+    await service.createCourse('Arts & Science');
+    expect(requests.last.method, 'POST');
+    expect(requests.last.url.path, '/sample/api/Courses/add');
+    expect(
+      requests.last.headers['content-type'],
+      startsWith('application/x-www-form-urlencoded'),
+    );
+    expect(requests.last.bodyFields, {'title': 'Arts & Science'});
+    expect((await service.getCourse(7)).id, 7);
+    await service.updateCourse(7, 'New');
+    expect(requests.last.url.path, '/sample/api/Courses/edit/7');
+    expect(requests.last.method, 'POST');
+    expect(requests.last.bodyFields, {'id': '7', 'title': 'New'});
+    await service.deleteCourse(7);
+    expect(requests.last.method, 'GET');
+    expect(requests.last.url.path, '/sample/api/Courses/delete/7');
+  });
+  test('student creation and resource lists use exact contract', () async {
+    final api = ApiService(
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/Students/add')) {
+          expect(request.method, 'POST');
+          expect(request.bodyFields, {
+            'lastname': 'Dela Cruz',
+            'firstname': 'José',
+            'course_id': '2',
+          });
+          return json({
+            'status': 'success',
+            'message': 'Student added successfully.',
+          });
+        }
+        if (request.url.path.endsWith('/Students/all')) {
+          return json({
+            'data': [
+              {
+                'id': 2,
+                'course_id': 2,
+                'title': 'BSN',
+                'lastname': 'Dela Cruz',
+                'firstname': 'José',
+              },
+            ],
+          });
+        }
+        throw StateError('Unexpected request');
+      }),
+    );
+    addTearDown(api.close);
+    final service = StudentService(api);
+    await service.addStudent(
+      lastname: 'Dela Cruz',
+      firstname: 'José',
+      courseId: 2,
+    );
+    expect((await service.getStudents()).single.firstname, 'José');
+  });
+  test('course deletion fails closed when referenced by students', () async {
+    final api = ApiService(
+      client: MockClient((request) async {
+        expect(request.url.path, '/sample/api/Students/all');
+        return json({
+          'data': [
+            {'course_id': '7'},
+          ],
+        });
+      }),
+    );
+    addTearDown(api.close);
+    await expectLater(
+      CourseService(api).deleteCourse(7),
+      throwsA(isA<Exception>()),
+    );
+  });
+  test(
+    'rejects HTTP 200 errors, malformed JSON, wrong envelopes and unconfirmed writes',
+    () async {
+      for (final response in [
+        json({'status': 'error', 'message': 'Title is required.'}),
+        http.Response('<html>PHP error</html>', 200),
+        json([]),
+        http.Response('Not found', 404),
+      ]) {
+        final api = ApiService(client: MockClient((_) async => response));
+        await expectLater(
+          api.request('Courses/all'),
+          throwsA(isA<Exception>()),
+        );
+        api.close();
+      }
+      final api = ApiService(
+        client: MockClient((_) async => json({'data': null})),
       );
-      final authService = AuthService(
-        storageService: storageService,
-        apiService: apiService,
+      await expectLater(api.list('Courses'), throwsA(isA<Exception>()));
+      await expectLater(
+        api.mutate('Courses/add', form: {'title': 'X'}),
+        throwsA(isA<Exception>()),
       );
-
-      isUserLoggedInNotifier.value = false;
-
-      await tester.pumpWidget(
-        MaterialApp(
-          home: RegisterPage(authService: authService),
-        ),
-      );
-      await tester.pump();
-
-      // Enter registration details
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Name'),
-        'New User',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Email'),
-        'new@test.com',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Password'),
-        'password123',
-      );
-      await tester.enterText(
-        find.widgetWithText(TextFormField, 'Confirm Password'),
-        'password123',
-      );
-
-      // Submit registration
-      await tester.tap(find.text('Register'));
-      await tester.pump();
-      await tester.pumpAndSettle();
-
-      // Verifies transition into WidgetTree, navigation history cleared, notifier updated
-      expect(isUserLoggedInNotifier.value, isTrue);
-      expect(find.byType(WidgetTree), findsOneWidget);
-      expect(find.byType(RegisterPage), findsNothing);
+      api.close();
+    },
+  );
+  testWidgets('navigation and student course selection', (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    http.Request? submitted;
+    final api = ApiService(
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/Students/add')) {
+          submitted = request;
+          return json({'status': 'success', 'message': 'Saved'});
+        }
+        if (request.url.path.endsWith('/Courses/all')) {
+          return json({
+            'data': [
+              {'id': 9, 'title': 'BSIT'},
+            ],
+          });
+        }
+        return json({'data': []});
+      }),
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(MaterialApp(home: WidgetTree(api: api)));
+    await tester.pumpAndSettle();
+    expect(find.byType(NavigationDestination), findsNWidgets(2));
+    await tester.tap(find.byTooltip('Add student'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Last name'),
+      'Doe',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'First name'),
+      'Jane',
+    );
+    await tester.tap(find.byType(DropdownButtonFormField<int>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('BSIT').last);
+    await tester.pumpAndSettle();
+    await tester.enterText(find.widgetWithText(TextFormField, 'Last name'), '');
+    await tester.ensureVisible(find.text('Create Student'));
+    await tester.tap(find.text('Create Student'));
+    await tester.pumpAndSettle();
+    expect(find.text('Enter a name (not 0).'), findsOneWidget);
+    expect(submitted, isNull);
+    await tester.enterText(
+      find.widgetWithText(TextFormField, 'Last name'),
+      'Doe',
+    );
+    await tester.ensureVisible(find.text('Create Student'));
+    await tester.tap(find.text('Create Student'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('Student created successfully.'), findsOneWidget);
+    expect(submitted!.bodyFields, {
+      'lastname': 'Doe',
+      'firstname': 'Jane',
+      'course_id': '9',
     });
   });
-
-  group('Global Auth & Token Guarding Tests', () {
-    testWidgets('ApiService handles 401: deletes token, sets notifier false, and redirects to LoginPage',
-        (WidgetTester tester) async {
-      final mockClient = MockClient((request) async {
-        return http.Response(
-          jsonEncode({'message': 'Unauthenticated.'}),
-          401,
-        );
-      });
-
-      final storageService = StorageService();
-      await storageService.saveToken('expired_or_invalid_token');
-      expect(await storageService.hasToken(), isTrue);
-
-      isUserLoggedInNotifier.value = true;
-
-      final navKey = GlobalKey<NavigatorState>();
-      final apiService = ApiService(
-        client: mockClient,
-        storageService: storageService,
-        navigatorKey: navKey,
+  testWidgets(
+    'course edit retrieves record and submits body id; delete confirms',
+    (tester) async {
+      final requests = <http.Request>[];
+      final api = ApiService(
+        client: MockClient((request) async {
+          requests.add(request);
+          if (request.url.path.endsWith('/Students/all')) {
+            return json({'data': []});
+          }
+          if (request.url.path.endsWith('/Courses/all')) {
+            return json({
+              'data': [
+                {'id': 9, 'title': 'Old'},
+              ],
+            });
+          }
+          if (request.method == 'GET' && request.url.path.endsWith('/edit/9')) {
+            return json({'id': 9, 'title': 'Fresh'});
+          }
+          return json({'status': 'success', 'message': 'Saved'});
+        }),
       );
-
-      await tester.pumpWidget(
-        MaterialApp(
-          navigatorKey: navKey,
-          home: Scaffold(
-            body: Center(
-              child: ElevatedButton(
-                onPressed: () async {
-                  await apiService.get(Uri.parse('http://10.0.2.2/web-api/api/products'));
-                },
-                child: const Text('Fetch Products'),
-              ),
-            ),
-          ),
-        ),
-      );
-      await tester.pump();
-
-      expect(find.text('Fetch Products'), findsOneWidget);
-
-      // Trigger request that returns 401
-      await tester.tap(find.text('Fetch Products'));
-      await tester.pump();
+      addTearDown(api.close);
+      selectedPageNotifier.value = 1;
+      await tester.pumpWidget(MaterialApp(home: WidgetTree(api: api)));
       await tester.pumpAndSettle();
-
-      // Token deleted from storage
-      expect(await storageService.getToken(), isNull);
-      // Notifier set to false
-      expect(isUserLoggedInNotifier.value, isFalse);
-      // Redirected to LoginPage
-      expect(find.byType(LoginPage), findsOneWidget);
-    });
+      await tester.tap(find.byTooltip('Edit course'));
+      await tester.pumpAndSettle();
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('Fresh'), findsOneWidget);
+      await tester.enterText(find.byType(TextFormField), 'Changed');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(requests.where((r) => r.method == 'POST').single.bodyFields, {
+        'id': '9',
+        'title': 'Changed',
+      });
+      await tester.tap(find.byTooltip('Delete course'));
+      await tester.pumpAndSettle();
+      expect(requests.any((r) => r.url.path.contains('/delete/')), false);
+      await tester.tap(find.text('Delete'));
+      await tester.pumpAndSettle();
+      expect(
+        requests.any((r) => r.url.path.endsWith('/Courses/delete/9')),
+        true,
+      );
+    },
+  );
+  testWidgets('students show loading, server failure and a working retry', (
+    tester,
+  ) async {
+    final response = Completer<http.Response>();
+    var calls = 0;
+    final api = ApiService(
+      client: MockClient((request) async {
+        calls++;
+        if (calls == 1) return response.future;
+        return json({'data': []});
+      }),
+    );
+    addTearDown(api.close);
+    await tester.pumpWidget(MaterialApp(home: WidgetTree(api: api)));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    response.complete(
+      json({'status': 'error', 'message': 'Database unavailable'}),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Database unavailable'), findsWidgets);
+    expect(find.byType(SnackBar), findsOneWidget);
+    await tester.tap(find.text('Retry'));
+    await tester.pumpAndSettle();
+    expect(find.text('No students found. Tap + to add one.'), findsOneWidget);
+    expect(calls, 2);
   });
 }

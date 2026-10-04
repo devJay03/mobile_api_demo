@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
 
-ValueNotifier<int> selectedPageNotifier = ValueNotifier<int>(0);
-ValueNotifier<bool> isUserLoggedInNotifier = ValueNotifier<bool>(false);
+final ValueNotifier<int> selectedPageNotifier = ValueNotifier<int>(0);
+
+final ValueNotifier<bool> isDarkModeNotifier = ValueNotifier(false);

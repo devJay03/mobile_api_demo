@@ -1,62 +1,48 @@
 import 'package:flutter/material.dart';
 import '../../data/notifiers.dart';
-import '../../services/auth_service.dart';
-import '../pages/categories/category_page.dart';
-import '../pages/products/product_list_page.dart';
+import '../../services/api_service.dart';
+import '../pages/courses/index.dart';
+import '../pages/students/index.dart';
 import 'navbar_widget.dart';
 
 class WidgetTree extends StatefulWidget {
-  final AuthService? authService;
-
-  const WidgetTree({super.key, this.authService});
-
+  final ApiService? api;
+  const WidgetTree({super.key, this.api});
   @override
   State<WidgetTree> createState() => _WidgetTreeState();
 }
 
 class _WidgetTreeState extends State<WidgetTree> {
-  late final AuthService _authService;
-  final List<Widget> _pages = const [
-    ProductListPage(),
-    CategoryPage(),
-  ];
-
+  late final ApiService _api = widget.api ?? ApiService();
   @override
-  void initState() {
-    super.initState();
-    _authService = widget.authService ?? AuthService();
+  void dispose() {
+    if (widget.api == null) _api.close();
+    super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
+  Widget build(BuildContext context) => ValueListenableBuilder<int>(
+    valueListenable: selectedPageNotifier,
+    builder: (context, index, child) => Scaffold(
       appBar: AppBar(
-        title: ValueListenableBuilder<int>(
-          valueListenable: selectedPageNotifier,
-          builder: (context, selectedIndex, child) {
-            return Text(selectedIndex == 0 ? 'Products' : 'Categories');
-          },
-        ),
+        title: Text(const ['Students', 'Courses'][index]),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              try {
-                await _authService.logout();
-              } catch (_) {}
-              isUserLoggedInNotifier.value = false;
-              selectedPageNotifier.value = 0;
-            },
+          ValueListenableBuilder<bool>(
+            valueListenable: isDarkModeNotifier,
+            builder: (context, isDarkMode, child) => IconButton(
+              tooltip: isDarkMode
+                  ? 'Switch to Light Mode'
+                  : 'Switch to Dark Mode',
+              onPressed: () {
+                isDarkModeNotifier.value = !isDarkModeNotifier.value;
+              },
+              icon: Icon(isDarkMode ? Icons.light_mode : Icons.dark_mode),
+            ),
           ),
         ],
       ),
-      body: ValueListenableBuilder<int>(
-        valueListenable: selectedPageNotifier,
-        builder: (context, selectedIndex, child) {
-          return _pages[selectedIndex];
-        },
-      ),
+      body: [StudentPage(api: _api), CoursePage(api: _api)][index],
       bottomNavigationBar: const NavbarWidget(),
-    );
-  }
+    ),
+  );
 }
